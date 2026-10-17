@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1b1f2a">
+<title>Hedera NFT Mint Tracker</title>
+<link rel="manifest" href="manifest.webmanifest">
+<style>
+  :root {
+    --bg: #f6f7fb; --panel: #ffffff; --text: #1b1f2a; --muted: #5d6475;
+    --border: #dde1ea; --accent: #6a3df0; --accent-text: #ffffff;
+    --ok: #138a52; --err: #c62828; --row-new: #efe9ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151c; --panel: #1b1f2a; --text: #e8eaf0; --muted: #9aa2b4;
+      --border: #2c3242; --accent: #8c6bff; --accent-text: #ffffff;
+      --ok: #4cc38a; --err: #ff6b6b; --row-new: #2a2346;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 14px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+           display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; flex: 1 1 auto; }
+  #status { font-size: 13px; color: var(--muted); }
+  #status.live::before { content: "● "; color: var(--ok); }
+  #status.error::before { content: "● "; color: var(--err); }
+  main { padding: 16px; max-width: 1200px; margin: 0 auto; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+           padding: 12px; margin-bottom: 16px; }
+  .controls { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+  label { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); gap: 4px; }
+  label.check { flex-direction: row; align-items: center; gap: 6px; font-size: 14px; color: var(--text); }
+  input, select, button { font: inherit; color: var(--text); background: var(--bg);
+           border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; min-height: 40px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  .buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .stats { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+  .stats b { color: var(--text); font-size: 16px; }
+  #list { display: flex; flex-direction: column; gap: 8px; }
+  .mint { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+          display: grid; grid-template-columns: 64px 1fr; gap: 10px; }
+  .mint.new { background: var(--row-new); }
+  .thumb { width: 64px; height: 64px; border-radius: 8px; background: var(--bg); object-fit: cover;
+           border: 1px solid var(--border); }
+  .mint .title { font-weight: 600; word-break: break-word; }
+  .mint .meta { font-size: 13px; color: var(--muted); word-break: break-all; }
+  a { color: var(--accent); }
+  .empty { text-align: center; color: var(--muted); padding: 30px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Hedera NFT Mint Tracker</h1>
+  <span id="status">Stopped</span>
+</header>
+<main>
+  <section class="panel">
+    <div class="controls">
+      <label>Network
+        <select id="network">
+          <option value="mainnet">Mainnet</option>
+          <option value="testnet">Testnet</option>
+          <option value="previewnet">Previewnet</option>
+        </select>
+      </label>
+      <label>Start from
+        <select id="startFrom">
+          <option value="0">Now</option>
+          <option value="5">5 minutes ago</option>
+          <option value="60">1 hour ago</option>
+          <option value="1440">24 hours ago</option>
+          <option value="resume">Where I left off</option>
+        </select>
+      </label>
+      <label>Only token IDs (comma separated, optional)
+        <input id="tokenFilter" placeholder="0.0.1234, 0.0.5678">
+      </label>
+      <label>Only treasury / receiver account (optional)
+        <input id="accountFilter" placeholder="0.0.4321">
+      </label>
+      <label>Poll every (seconds)
+        <input id="interval" type="number" min="2" value="5">
+      </label>
+    </div>
+    <div class="buttons">
+      <label class="check"><input type="checkbox" id="loadImages" checked> Load NFT metadata &amp; images</label>
+      <label class="check"><input type="checkbox" id="beep"> Beep on new mint</label>
+    </div>
+    <div class="buttons">
+      <button id="startBtn" class="primary">Start</button>
+      <button id="stopBtn" disabled>Stop</button>
+      <button id="csvBtn">Export CSV</button>
+      <button id="clearBtn">Clear list</button>
+    </div>
+  </section>
+
+  <section class="panel stats">
+    <span>Mint transactions <b id="statTx">0</b></span>
+    <span>NFTs minted <b id="statNft">0</b></span>
+    <span>Collections <b id="statTokens">0</b></span>
+    <span>Last checked up to <b id="statCursor">–</b></span>
+  </section>
+
+  <section id="list"><div class="empty">Press Start to begin capturing NFT mints.</div></section>
+</main>
+
+<script>
+"use strict";
+
+const MIRRORS = {
+  mainnet: "https://mainnet-public.mirrornode.hedera.com",
+  testnet: "https://testnet.mirrornode.hedera.com",
+  previewnet: "https://previewnet.mirrornode.hedera.com",
+};
+const HASHSCAN = { mainnet: "mainnet", testnet: "testnet", previewnet: "previewnet" };
+const IPFS_GATEWAY = "https://ipfs.io/ipfs/";
+const MAX_ROWS = 500;           // rows kept on screen
+const MAX_STORED = 5000;        // mints kept in local storage
+
+const $ = (id) => document.getElementById(id);
+const store = {
+  get(key, fallback) {
+    try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); }
+    catch { return fallback; }
+  },
+  set(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage full or blocked */ }
+  },
+};
+
+let mints = store.get("nftMints", []);
+let cursor = null;     // last consensus timestamp processed ("seconds.nanos")
+let timer = null;
+let running = false;
+const tokenCache = new Map();
+
+// ---------- helpers ----------
+function tsToDate(ts) { return new Date(parseFloat(ts) * 1000); }
+function nowTs(minutesAgo) {
+  const ms = Date.now() - minutesAgo * 60000;
+  return (Math.floor(ms / 1000)) + ".000000000";
+}
+function fmtTime(ts) { return tsToDate(ts).toLocaleString(); }
+function setStatus(text, cls) { const s = $("status"); s.textContent = text; s.className = cls || ""; }
+
+function decodeMetadata(b64) {
+  if (!b64) return "";
+  try {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch { return ""; }
+}
+function toHttp(uri) {
+  if (!uri) return "";
+  if (uri.startsWith("ipfs://")) return IPFS_GATEWAY + uri.slice(7).replace(/^ipfs\//, "");
+  if (/^(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{50,})(\/.*)?$/.test(uri)) return IPFS_GATEWAY + uri;
+  if (uri.startsWith("http://") || uri.startsWith("https://")) return uri;
+  return "";
+}
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+async function getJson(url) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await fetch(url);
+    if (res.status === 429) { await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt)); continue; }
+    if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+    return res.json();
+  }
+  throw new Error("Rate limited by mirror node");
+}
+
+async function tokenInfo(base, tokenId) {
+  if (tokenCache.has(tokenId)) return tokenCache.get(tokenId);
+  const p = getJson(`${base}/api/v1/tokens/${tokenId}`)
+    .then((t) => ({ name: t.name, symbol: t.symbol, type: t.type, treasury: t.treasury_account_id,
+                    supply: t.total_supply, maxSupply: t.max_supply }))
+    .catch(() => ({ name: "", symbol: "", type: "" }));
+  tokenCache.set(tokenId, p);
+  return p;
+}
+
+// ---------- core polling ----------
+// NFT mints are TOKENMINT transactions whose nft_transfers have no sender
+// (the new serials appear out of nowhere and land in the treasury account).
+async function poll() {
+  if (!running) return;
+  const network = $("network").value;
+  const base = MIRRORS[network];
+  let url = `${base}/api/v1/transactions?transactiontype=TOKENMINT&result=success` +
+            `&order=asc&limit=100&timestamp=gt:${cursor}`;
+  try {
+    let found = 0;
+    while (url && running) {
+      const page = await getJson(url);
+      for (const tx of page.transactions || []) {
+        cursor = tx.consensus_timestamp;
+        const mint = await toMint(base, network, tx);
+        if (mint) { addMint(mint); found++; }
+      }
+      url = page.links && page.links.next ? base + page.links.next : null;
+    }
+    store.set("cursor:" + network, cursor);
+    $("statCursor").textContent = fmtTime(cursor);
+    setStatus(`Live on ${network}` + (found ? ` · ${found} new` : ""), "live");
+  } catch (e) {
+    setStatus("Error: " + e.message + " (retrying)", "error");
+  }
+  if (running) timer = setTimeout(poll, Math.max(2, +$("interval").value || 5) * 1000);
+}
+
+async function toMint(base, network, tx) {
+  const minted = (tx.nft_transfers || []).filter((t) => !t.sender_account_id);
+  if (!minted.length) return null;   // fungible mint
+
+  const tokenFilter = $("tokenFilter").value.split(",").map((s) => s.trim()).filter(Boolean);
+  const accountFilter = $("accountFilter").value.trim();
+  const tokenId = minted[0].token_id;
+  if (tokenFilter.length && !tokenFilter.includes(tokenId)) return null;
+  const receiver = minted[0].receiver_account_id;
+  if (accountFilter && receiver !== accountFilter) return null;
+
+  const info = await tokenInfo(base, tokenId);
+  return {
+    network,
+    timestamp: tx.consensus_timestamp,
+    txId: tx.transaction_id,
+    tokenId,
+    name: info.name || "",
+    symbol: info.symbol || "",
+    receiver,
+    payer: tx.transaction_id.split("-")[0],
+    serials: minted.map((t) => t.serial_number),
+    viaContract: !!tx.parent_consensus_timestamp,
+    metadata: "",
+    image: "",
+  };
+}
+
+// ---------- metadata / images ----------
+// A few lookups at a time, so catching up on a backlog doesn't hit rate limits.
+const enrichQueue = [];
+let enrichActive = 0;
+function enrich(mint, card) {
+  if (!$("loadImages").checked) return;
+  enrichQueue.push([mint, card]);
+  pumpEnrich();
+}
+function pumpEnrich() {
+  while (enrichActive < 3 && enrichQueue.length) {
+    const [mint, card] = enrichQueue.shift();
+    if (!card.isConnected) continue;   // scrolled off the list
+    enrichActive++;
+    enrichOne(mint, card).finally(() => { enrichActive--; pumpEnrich(); });
+  }
+}
+async function enrichOne(mint, card) {
+  const base = MIRRORS[mint.network];
+  try {
+    const nft = await getJson(`${base}/api/v1/tokens/${mint.tokenId}/nfts/${mint.serials[0]}`);
+    mint.metadata = decodeMetadata(nft.metadata);
+    const metaUrl = toHttp(mint.metadata);
+    renderMeta(mint, card);
+    if (!metaUrl) return;
+    const res = await fetch(metaUrl);
+    const type = res.headers.get("content-type") || "";
+    if (type.startsWith("image/")) { mint.image = metaUrl; }
+    else {
+      const json = await res.json();
+      if (json.name) mint.nftName = String(json.name);
+      mint.image = toHttp(json.image || json.image_url || "");
+    }
+    renderMeta(mint, card);
+    store.set("nftMints", mints.slice(0, MAX_STORED));
+  } catch { /* metadata is best effort */ }
+}
+
+// ---------- rendering ----------
+function addMint(mint) {
+  mints.unshift(mint);
+  if (mints.length > MAX_STORED) mints.length = MAX_STORED;
+  store.set("nftMints", mints);
+  const list = $("list");
+  const empty = list.querySelector(".empty");
+  if (empty) empty.remove();
+  const card = renderCard(mint, true);
+  list.prepend(card);
+  while (list.children.length > MAX_ROWS) list.lastElementChild.remove();
+  updateStats();
+  if ($("beep").checked) beep();
+  enrich(mint, card);
+}
+
+function renderCard(mint, isNew) {
+  const card = document.createElement("article");
+  card.className = "mint" + (isNew ? " new" : "");
+  const net = HASHSCAN[mint.network] || "mainnet";
+  const serials = mint.serials.length > 10
+    ? `${mint.serials[0]}–${mint.serials[mint.serials.length - 1]} (${mint.serials.length})`
+    : mint.serials.join(", ");
+  card.innerHTML = `
+    <img class="thumb" alt="" loading="lazy">
+    <div>
+      <div class="title"><span class="nm"></span></div>
+      <div class="meta">
+        Token <a href="https://hashscan.io/${net}/token/${escapeHtml(mint.tokenId)}" target="_blank" rel="noopener">${escapeHtml(mint.tokenId)}</a>
+        · Serial ${escapeHtml(serials)}
+        · To <a href="https://hashscan.io/${net}/account/${escapeHtml(mint.receiver)}" target="_blank" rel="noopener">${escapeHtml(mint.receiver)}</a>
+        ${mint.viaContract ? "· via smart contract" : ""}
+      </div>
+      <div class="meta">${escapeHtml(fmtTime(mint.timestamp))} ·
+        <a href="https://hashscan.io/${net}/transaction/${escapeHtml(mint.timestamp)}" target="_blank" rel="noopener">${escapeHtml(mint.txId)}</a>
+      </div>
+      <div class="meta md"></div>
+    </div>`;
+  if (isNew) setTimeout(() => card.classList.remove("new"), 4000);
+  renderMeta(mint, card);
+  return card;
+}
+
+function renderMeta(mint, card) {
+  const collection = [mint.name || "Unnamed collection", mint.symbol ? `(${mint.symbol})` : ""]
+    .filter(Boolean).join(" ");
+  const title = mint.nftName && mint.nftName !== mint.name ? `${mint.nftName} · ${collection}` : collection;
+  card.querySelector(".nm").textContent = title;
+  const md = card.querySelector(".md");
+  const link = toHttp(mint.metadata);
+  md.innerHTML = mint.metadata
+    ? "Metadata: " + (link
+        ? `<a href="${escapeHtml(link)}" target="_blank" rel="noopener">${escapeHtml(mint.metadata)}</a>`
+        : escapeHtml(mint.metadata))
+    : "";
+  const img = card.querySelector(".thumb");
+  img.onerror = () => { img.removeAttribute("src"); };
+  if (mint.image && img.getAttribute("src") !== mint.image) img.src = mint.image;
+}
+
+function renderAll() {
+  const list = $("list");
+  list.innerHTML = "";
+  if (!mints.length) {
+    list.innerHTML = '<div class="empty">Press Start to begin capturing NFT mints.</div>';
+  }
+  for (const m of mints.slice(0, MAX_ROWS)) list.appendChild(renderCard(m, false));
+  updateStats();
+}
+
+function updateStats() {
+  $("statTx").textContent = mints.length;
+  $("statNft").textContent = mints.reduce((n, m) => n + m.serials.length, 0);
+  $("statTokens").textContent = new Set(mints.map((m) => m.tokenId)).size;
+}
+
+let audioCtx;
+function beep() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.frequency.value = 880; g.gain.value = 0.05;
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime + 0.12);
+  } catch { /* audio not available */ }
+}
+
+function exportCsv() {
+  const head = ["network", "consensus_time", "transaction_id", "token_id", "collection", "symbol",
+                "receiver", "payer", "serials", "count", "via_contract", "metadata", "image"];
+  const rows = mints.map((m) => [m.network, fmtTime(m.timestamp), m.txId, m.tokenId, m.name, m.symbol,
+                m.receiver, m.payer, m.serials.join(" "), m.serials.length, m.viaContract, m.metadata, m.image]);
+  const csv = [head, ...rows]
+    .map((r) => r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","))
+    .join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = `hedera-nft-mints-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+// ---------- controls ----------
+function start() {
+  const network = $("network").value;
+  const from = $("startFrom").value;
+  cursor = from === "resume" ? store.get("cursor:" + network, null) || nowTs(0) : nowTs(+from);
+  running = true;
+  $("startBtn").disabled = true; $("stopBtn").disabled = false;
+  for (const id of ["network", "startFrom"]) $(id).disabled = true;
+  setStatus(`Connecting to ${network}…`);
+  saveSettings();
+  poll();
+}
+function stop() {
+  running = false;
+  clearTimeout(timer);
+  $("startBtn").disabled = false; $("stopBtn").disabled = true;
+  for (const id of ["network", "startFrom"]) $(id).disabled = false;
+  setStatus("Stopped");
+}
+const SETTINGS = ["network", "startFrom", "tokenFilter", "accountFilter", "interval", "loadImages", "beep"];
+function saveSettings() {
+  const s = {};
+  for (const id of SETTINGS) s[id] = $(id).type === "checkbox" ? $(id).checked : $(id).value;
+  store.set("settings", s);
+}
+function loadSettings() {
+  const s = store.get("settings", {});
+  for (const id of SETTINGS) {
+    if (!(id in s)) continue;
+    if ($(id).type === "checkbox") $(id).checked = s[id]; else $(id).value = s[id];
+  }
+}
+
+$("startBtn").onclick = start;
+$("stopBtn").onclick = stop;
+$("csvBtn").onclick = exportCsv;
+$("clearBtn").onclick = () => {
+  if (!confirm("Clear all captured mints?")) return;
+  mints = []; store.set("nftMints", mints); renderAll();
+};
+for (const id of SETTINGS) $(id).addEventListener("change", saveSettings);
+
+loadSettings();
+renderAll();
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
+</script>
+</body>
+</html>

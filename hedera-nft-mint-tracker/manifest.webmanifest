@@ -1,0 +1,11 @@
+{
+  "name": "Hedera NFT Mint Tracker",
+  "short_name": "NFT Mints",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#12151c",
+  "theme_color": "#1b1f2a",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
