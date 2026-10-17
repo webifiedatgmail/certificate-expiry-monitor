@@ -25,7 +25,22 @@ For each mint the page shows:
 - links to the token, account and transaction on HashScan
 - the NFT metadata, with its name and image read from IPFS when "Load NFT metadata & images" is on
 
+- the metadata attributes, such as the athlete an NFT represents
+
 Captured mints are saved in the browser and can be exported to CSV.
+
+## Following one project (for example Mingo)
+
+1. Start with no filters. **Collections seen** lists every NFT collection that mints,
+   with its name, token ID and treasury account, and the **Activity log** notes
+   each new one. Pick the project's collection out by name. Alternatively, look up
+   one of its NFTs on HashScan to get the token ID and treasury.
+2. Tap **Watch token** to capture only that collection. Tap **Watch treasury** to
+   capture every collection that treasury owns, which also catches new collections
+   the project creates later, for example one per event or athlete.
+
+The treasury filter checks each token's treasury account, so it still matches when
+the newly minted NFT lands in a different account.
 "Start from → Where I left off" picks up from the last checked timestamp, so you
 don't miss anything between sessions.
 
