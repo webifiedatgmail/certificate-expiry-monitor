@@ -51,6 +51,12 @@
   .mint .meta { font-size: 13px; color: var(--muted); word-break: break-all; }
   a { color: var(--accent); }
   .empty { text-align: center; color: var(--muted); padding: 30px 0; }
+  summary { cursor: pointer; font-weight: 600; }
+  #log { margin-top: 8px; max-height: 260px; overflow-y: auto;
+         font: 12px/1.5 ui-monospace, Consolas, "Courier New", monospace; }
+  #log div { white-space: pre-wrap; word-break: break-word; border-bottom: 1px solid var(--border); }
+  #log .error { color: var(--err); }
+  #log .found { color: var(--ok); }
 </style>
 </head>
 <body>
@@ -113,8 +119,16 @@
     <span>Mint transactions <b id="statTx">0</b></span>
     <span>NFTs minted <b id="statNft">0</b></span>
     <span>Collections <b id="statTokens">0</b></span>
-    <span>Last checked up to <b id="statCursor">–</b></span>
+    <span>Polls <b id="statPolls">0</b></span>
+    <span>Last poll <b id="statPoll">–</b></span>
+    <span>Mirror node data up to <b id="statHead">–</b></span>
+    <span>Last mint seen <b id="statCursor">–</b></span>
   </section>
+
+  <details class="panel" id="logBox">
+    <summary>Activity log</summary>
+    <div id="log"></div>
+  </details>
 
   <section id="list"><div class="empty">Press Start to begin capturing NFT mints.</div></section>
 </main>
@@ -147,6 +161,7 @@ let mints = store.get("nftMints", []);
 let cursor = null;     // last consensus timestamp processed ("seconds.nanos")
 let timer = null;
 let running = false;
+let pollCount = 0;
 const tokenCache = new Map();
 
 // ---------- helpers ----------
@@ -157,6 +172,17 @@ function nowTs(minutesAgo) {
 }
 function fmtTime(ts) { return tsToDate(ts).toLocaleString(); }
 function setStatus(text, cls) { const s = $("status"); s.textContent = text; s.className = cls || ""; }
+
+const MAX_LOG = 200;
+function log(msg, cls) {
+  const line = document.createElement("div");
+  line.textContent = `${new Date().toLocaleTimeString()}  ${msg}`;
+  if (cls) line.className = cls;
+  const box = $("log");
+  box.prepend(line);
+  while (box.children.length > MAX_LOG) box.lastElementChild.remove();
+  (cls === "error" ? console.warn : console.log)("[nft-tracker]", msg);
+}
 
 function decodeMetadata(b64) {
   if (!b64) return "";
@@ -206,11 +232,21 @@ async function poll() {
   const base = MIRRORS[network];
   let url = `${base}/api/v1/transactions?transactiontype=TOKENMINT&result=success` +
             `&order=asc&limit=100&timestamp=gt:${cursor}`;
+  const started = performance.now();
+  pollCount++;
   try {
-    let found = 0;
+    // Latest block shows how fresh the mirror node's data is, even when nothing is minted.
+    const head = await getJson(`${base}/api/v1/blocks?limit=1&order=desc`);
+    const headTs = head.blocks && head.blocks[0] && head.blocks[0].timestamp && head.blocks[0].timestamp.to;
+    if (headTs) $("statHead").textContent = fmtTime(headTs);
+
+    let found = 0, txCount = 0, nftTx = 0, pages = 0;
     while (url && running) {
       const page = await getJson(url);
+      pages++;
       for (const tx of page.transactions || []) {
+        txCount++;
+        if ((tx.nft_transfers || []).some((t) => !t.sender_account_id)) nftTx++;
         cursor = tx.consensus_timestamp;
         const mint = await toMint(base, network, tx);
         if (mint) { addMint(mint); found++; }
@@ -219,9 +255,15 @@ async function poll() {
     }
     $("hint").hidden = true;
     store.set("cursor:" + network, cursor);
-    $("statCursor").textContent = fmtTime(cursor);
+    const ms = Math.round(performance.now() - started);
+    const skipped = txCount - nftTx;
+    const filtered = nftTx - found;
+    log(`Poll #${pollCount}: ${txCount} mint tx in ${pages} page(s), ${found} NFT mint(s) captured` +
+        (skipped ? `, ${skipped} fungible skipped` : "") +
+        (filtered ? `, ${filtered} hidden by filters` : "") + ` (${ms} ms)`, found ? "found" : "");
     setStatus(`Live on ${network}` + (found ? ` · ${found} new` : ""), "live");
   } catch (e) {
+    log(`Poll #${pollCount} failed: ${e.message}`, "error");
     if (e instanceof TypeError) {
       // The browser blocked the request before it reached Hedera (no internet,
       // an in-app file viewer that forbids network access, or an ad/privacy blocker).
@@ -236,6 +278,8 @@ async function poll() {
       setStatus("Error: " + e.message + " (retrying)", "error");
     }
   }
+  $("statPolls").textContent = pollCount;
+  $("statPoll").textContent = new Date().toLocaleTimeString();
   if (running) timer = setTimeout(poll, Math.max(2, +$("interval").value || 5) * 1000);
 }
 
@@ -379,6 +423,7 @@ function updateStats() {
   $("statTx").textContent = mints.length;
   $("statNft").textContent = mints.reduce((n, m) => n + m.serials.length, 0);
   $("statTokens").textContent = new Set(mints.map((m) => m.tokenId)).size;
+  $("statCursor").textContent = mints.length ? fmtTime(mints[0].timestamp) : "–";
 }
 
 let audioCtx;
@@ -416,6 +461,7 @@ function start() {
   $("startBtn").disabled = true; $("stopBtn").disabled = false;
   for (const id of ["network", "startFrom"]) $(id).disabled = true;
   setStatus(`Connecting to ${network}…`);
+  log(`Started on ${network}, looking for mints after ${fmtTime(cursor)}`);
   saveSettings();
   poll();
 }
@@ -425,6 +471,7 @@ function stop() {
   $("startBtn").disabled = false; $("stopBtn").disabled = true;
   for (const id of ["network", "startFrom"]) $(id).disabled = false;
   setStatus("Stopped");
+  log("Stopped");
 }
 const SETTINGS = ["network", "startFrom", "tokenFilter", "accountFilter", "interval", "loadImages", "beep"];
 function saveSettings() {
