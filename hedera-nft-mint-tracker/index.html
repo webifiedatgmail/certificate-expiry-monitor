@@ -99,6 +99,16 @@
     </div>
   </section>
 
+  <section class="panel" id="hint" hidden>
+    <b>Can't connect to Hedera.</b> Tap <i>Test connection</i> at the top.
+    If that page shows text starting with <code>{"transactions"</code>, your internet works and
+    this page is being blocked from the network. That happens when the file is opened inside
+    another app's file preview, for example the Claude app's. Open the page in Chrome or Edge
+    instead: save the file, then open it from your Files app with <i>Open with → Chrome</i>,
+    or use a hosted link. If an ad blocker or private DNS is on, allow
+    <code>mirrornode.hedera.com</code>.
+  </section>
+
   <section class="panel stats">
     <span>Mint transactions <b id="statTx">0</b></span>
     <span>NFTs minted <b id="statNft">0</b></span>
@@ -207,11 +217,24 @@ async function poll() {
       }
       url = page.links && page.links.next ? base + page.links.next : null;
     }
+    $("hint").hidden = true;
     store.set("cursor:" + network, cursor);
     $("statCursor").textContent = fmtTime(cursor);
     setStatus(`Live on ${network}` + (found ? ` · ${found} new` : ""), "live");
   } catch (e) {
-    setStatus("Error: " + e.message + " (retrying)", "error");
+    if (e instanceof TypeError) {
+      // The browser blocked the request before it reached Hedera (no internet,
+      // an in-app file viewer that forbids network access, or an ad/privacy blocker).
+      setStatus("Can't reach the Hedera mirror node (retrying). ", "error");
+      const test = document.createElement("a");
+      test.href = `${base}/api/v1/transactions?limit=1`;
+      test.target = "_blank"; test.rel = "noopener";
+      test.textContent = "Test connection";
+      $("status").appendChild(test);
+      $("hint").hidden = false;
+    } else {
+      setStatus("Error: " + e.message + " (retrying)", "error");
+    }
   }
   if (running) timer = setTimeout(poll, Math.max(2, +$("interval").value || 5) * 1000);
 }
