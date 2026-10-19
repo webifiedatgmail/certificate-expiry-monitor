@@ -41,6 +41,9 @@ Captured mints are saved in the browser and can be exported to CSV.
 
 The treasury filter checks each token's treasury account, so it still matches when
 the newly minted NFT lands in a different account.
+
+## Choosing where to start
+
 "Start from → Where I left off" picks up from the last checked timestamp, so you
 don't miss anything between sessions. "Start from → Pick a date and time…" shows a
 date and time picker (in your local time) and captures every mint after that moment,
