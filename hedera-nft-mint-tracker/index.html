@@ -20,6 +20,7 @@
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   header { padding: 14px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
@@ -90,7 +91,11 @@
           <option value="60">1 hour ago</option>
           <option value="1440">24 hours ago</option>
           <option value="resume">Where I left off</option>
+          <option value="custom">Pick a date and time…</option>
         </select>
+      </label>
+      <label id="startAtLabel" hidden>Start date and time (your local time)
+        <input id="startAt" type="datetime-local" step="1">
       </label>
       <label>Only token IDs (comma separated, optional)
         <input id="tokenFilter" placeholder="0.0.1234, 0.0.5678">
@@ -556,10 +561,17 @@ function exportCsv() {
 function start() {
   const network = $("network").value;
   const from = $("startFrom").value;
-  cursor = from === "resume" ? store.get("cursor:" + network, null) || nowTs(0) : nowTs(+from);
+  if (from === "custom") {
+    const ms = new Date($("startAt").value).getTime();   // datetime-local is parsed as local time
+    if (!$("startAt").value || isNaN(ms)) { alert("Pick a start date and time first."); return; }
+    if (ms > Date.now()) { alert("The start date and time is in the future."); return; }
+    cursor = Math.floor(ms / 1000) + ".000000000";
+  } else {
+    cursor = from === "resume" ? store.get("cursor:" + network, null) || nowTs(0) : nowTs(+from);
+  }
   running = true;
   $("startBtn").disabled = true; $("stopBtn").disabled = false;
-  for (const id of ["network", "startFrom"]) $(id).disabled = true;
+  for (const id of LOCKED_WHILE_RUNNING) $(id).disabled = true;
   setStatus(`Connecting to ${network}…`);
   log(`Started on ${network}, looking for mints after ${fmtTime(cursor)}`);
   saveSettings();
@@ -569,11 +581,24 @@ function stop() {
   running = false;
   clearTimeout(timer);
   $("startBtn").disabled = false; $("stopBtn").disabled = true;
-  for (const id of ["network", "startFrom"]) $(id).disabled = false;
+  for (const id of LOCKED_WHILE_RUNNING) $(id).disabled = false;
   setStatus("Stopped");
   log("Stopped");
 }
-const SETTINGS = ["network", "startFrom", "tokenFilter", "accountFilter", "interval", "loadImages", "beep"];
+const LOCKED_WHILE_RUNNING = ["network", "startFrom", "startAt"];
+
+// Shows the date/time picker only for "Pick a date and time", defaulting it to an hour ago.
+function toggleStartAt() {
+  const custom = $("startFrom").value === "custom";
+  $("startAtLabel").hidden = !custom;
+  if (custom && !$("startAt").value) {
+    const d = new Date(Date.now() - 3600000);
+    d.setSeconds(0, 0);
+    $("startAt").value = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 19);
+  }
+}
+
+const SETTINGS = ["network", "startFrom", "startAt", "tokenFilter", "accountFilter", "interval", "loadImages", "beep"];
 function saveSettings() {
   const s = {};
   for (const id of SETTINGS) s[id] = $(id).type === "checkbox" ? $(id).checked : $(id).value;
@@ -602,9 +627,11 @@ $("collBody").addEventListener("click", (e) => {
   if (b.dataset.watchTreasury) watch("accountFilter", b.dataset.watchTreasury);
 });
 $("network").addEventListener("change", renderCollections);
+$("startFrom").addEventListener("change", toggleStartAt);
 for (const id of SETTINGS) $(id).addEventListener("change", saveSettings);
 
 loadSettings();
+toggleStartAt();
 renderAll();
 renderCollections();
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
