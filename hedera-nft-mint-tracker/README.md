@@ -65,16 +65,18 @@ python -m http.server 8080
 
 Then open http://localhost:8080 and choose **Install** from the address bar.
 
-### Android phone
+### Android phone (and any other device)
 
-Opening a local HTML file is awkward on Android, so the easiest way is to host the
-folder somewhere, for example with GitHub Pages:
+The tracker is published with GitHub Pages at:
 
-1. In the GitHub repository, open **Settings → Pages**, choose the branch, and save.
-2. On the phone, open `https://<user>.github.io/<repo>/hedera-nft-mint-tracker/` in Chrome.
-3. Use the Chrome menu → **Add to Home screen**. It then opens full-screen like an app.
+**https://webifiedatgmail.github.io/certificate-expiry-monitor/hedera-nft-mint-tracker/**
 
-The same URL also works on the PC.
+Open that link in Chrome, then use the Chrome menu → **Add to Home screen** to get
+an app icon that opens full-screen. The same link works on the PC.
+
+GitHub Pages serves the `claude/hedera-nft-minting-tracker-1myzuw` branch
+(Settings → Pages → Deploy from a branch → that branch, `/ (root)`), so every
+push to that branch updates the live page within a minute or two.
 
 ## Notes
 
